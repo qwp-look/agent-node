@@ -33,16 +33,19 @@ const readBody = (req) => new Promise((resolve, reject) => {
 
 const trim = (s) => (s && s.length > Number(MAX_OUTPUT)) ? s.slice(0, Number(MAX_OUTPUT)) + `…(+${s.length - Number(MAX_OUTPUT)} 字符)` : (s || '');
 
-// 同时监听 5000（infrlo 该应用的路由端口）和平台注入的 PORT，哪个通走哪个
+// 同时监听 5000（infrlo 该应用的路由端口）和平台注入的 PORT，哪个通走哪个；
+// 单个端口被占不致命，跳过即可
 const listenPorts = [...new Set([5000, Number(PORT) || 0].filter(Boolean))];
 for (const p of listenPorts) {
-  http.createServer(async (req, res) => {
+  const srv = http.createServer(async (req, res) => {
     try {
       await handle(req, res);
     } catch (e) {
       try { send(res, 500, { error: String(e.message || e) }); } catch {}
     }
-  }).listen(p, () => console.log(`agent listening on :${p}`));
+  });
+  srv.on('error', (e) => console.error(`[listen] :${p} failed: ${e.message}`));
+  srv.listen(p, () => console.log(`agent listening on :${p}`));
 }
 
 async function handle(req, res) {
