@@ -33,7 +33,19 @@ const readBody = (req) => new Promise((resolve, reject) => {
 
 const trim = (s) => (s && s.length > Number(MAX_OUTPUT)) ? s.slice(0, Number(MAX_OUTPUT)) + `…(+${s.length - Number(MAX_OUTPUT)} 字符)` : (s || '');
 
-const server = http.createServer(async (req, res) => {
+// 同时监听 5000（infrlo 该应用的路由端口）和平台注入的 PORT，哪个通走哪个
+const listenPorts = [...new Set([5000, Number(PORT) || 0].filter(Boolean))];
+for (const p of listenPorts) {
+  http.createServer(async (req, res) => {
+    try {
+      await handle(req, res);
+    } catch (e) {
+      try { send(res, 500, { error: String(e.message || e) }); } catch {}
+    }
+  }).listen(p, () => console.log(`agent listening on :${p}`));
+}
+
+async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, {
@@ -45,32 +57,26 @@ const server = http.createServer(async (req, res) => {
     });
   }
   if (!auth(req)) return send(res, 401, { error: 'unauthorized' });
-  try {
-    if (req.method === 'POST' && url.pathname === '/run') {
-      const { command } = await readBody(req);
-      if (!command || typeof command !== 'string') return send(res, 400, { error: 'command required' });
-      const out = await new Promise((resolve) => {
-        exec(command, { timeout: Number(EXEC_TIMEOUT_MS), maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' },
-          (err, stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, stdout, stderr, killed: !!(err && err.killed) }));
-      });
-      console.log(`[run] ${command.slice(0, 100)} -> exit ${out.code}`);
-      return send(res, 200, { exit_code: out.code, killed: out.killed, stdout: trim(out.stdout), stderr: trim(out.stderr) });
-    }
-    if (req.method === 'POST' && url.pathname === '/fetch') {
-      const { url: target } = await readBody(req);
-      if (!target || !/^https?:\/\//.test(target)) return send(res, 400, { error: 'url required' });
-      const r = await fetch(target, { redirect: 'follow', signal: AbortSignal.timeout(30000), headers: { 'User-Agent': 'qqbot-agent/1.0' } });
-      const body = await r.text();
-      console.log(`[fetch] ${target.slice(0, 100)} -> ${r.status}`);
-      return send(res, 200, { status: r.status, content_type: r.headers.get('content-type'), body: trim(body) });
-    }
-    send(res, 404, { error: 'not found' });
-  } catch (e) {
-    send(res, 500, { error: String(e.message || e) });
+  if (req.method === 'POST' && url.pathname === '/run') {
+    const { command } = await readBody(req);
+    if (!command || typeof command !== 'string') return send(res, 400, { error: 'command required' });
+    const out = await new Promise((resolve) => {
+      exec(command, { timeout: Number(EXEC_TIMEOUT_MS), maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' },
+        (err, stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, stdout, stderr, killed: !!(err && err.killed) }));
+    });
+    console.log(`[run] ${command.slice(0, 100)} -> exit ${out.code}`);
+    return send(res, 200, { exit_code: out.code, killed: out.killed, stdout: trim(out.stdout), stderr: trim(out.stderr) });
   }
-});
-
-server.listen(Number(PORT), () => console.log(`agent listening on :${PORT}`));
+  if (req.method === 'POST' && url.pathname === '/fetch') {
+    const { url: target } = await readBody(req);
+    if (!target || !/^https?:\/\//.test(target)) return send(res, 400, { error: 'url required' });
+    const r = await fetch(target, { redirect: 'follow', signal: AbortSignal.timeout(30000), headers: { 'User-Agent': 'qqbot-agent/1.0' } });
+    const body = await r.text();
+    console.log(`[fetch] ${target.slice(0, 100)} -> ${r.status}`);
+    return send(res, 200, { status: r.status, content_type: r.headers.get('content-type'), body: trim(body) });
+  }
+  send(res, 404, { error: 'not found' });
+}
 
 // 双向保活：定时 ping Orkestr 上的机器人
 if (BOT_PING_URL) {
