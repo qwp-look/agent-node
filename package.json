@@ -1,0 +1,10 @@
+{
+  "name": "qqbot-agent",
+  "version": "1.0.0",
+  "description": "Remote executor agent for the QQ bot (token-authed /run and /fetch)",
+  "type": "module",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js"
+  }
+}
